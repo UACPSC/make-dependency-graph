@@ -9,26 +9,18 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install Graphviz
-      shell: bash
-      run: |
-        # skip rebuilding the man page index, which nothing here uses
-        sudo rm -f /var/lib/man-db/auto-update
-
-        # the runner's package lists are usually current, so only update them if the install fails
-        install_graphviz() { sudo apt-get install -y --no-install-recommends graphviz; }
-        install_graphviz || { sudo apt-get update && install_graphviz; }
-
     - name: Generate graphs
       shell: bash
       env:
-        MAKEGRAPH: ${{ github.action_path }}/makegraph
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        # one makegraph.svg per Makefile, at the same relative path
+        # one makegraph.svg per Makefile, at the same relative path, rendered with the
+        # WebAssembly build of Graphviz so nothing has to be installed
         git ls-files '*Makefile' | while read -r makefile; do
           dir=$(dirname "$makefile")
           mkdir -p "$RUNNER_TEMP/makegraph/$dir"
-          python3 "$MAKEGRAPH" "$makefile" -o "$RUNNER_TEMP/makegraph/$dir/makegraph.svg"
+          python3 "$ACTION_PATH/makegraph" "$makefile" --dot |
+            node "$ACTION_PATH/render.mjs" "$RUNNER_TEMP/makegraph/$dir/makegraph.svg"
         done
 
     - name: Commit to graph branch

@@ -32,6 +32,12 @@ jobs:
       branch: graphs
 ```
 
+## How it renders
+
+In the action, `makegraph --dot` produces the Graphviz source and `render.mjs` renders it with a
+WebAssembly build of Graphviz (in `graphviz/`) on the runner's preinstalled Node, so nothing has to
+be installed. Locally, `makegraph` uses the Graphviz `dot` command.
+
 ## Run locally
 
 Requires Python 3 and [Graphviz](https://graphviz.org).
