@@ -43,9 +43,15 @@ runs:
           last=$(git rev-parse -q --verify "$short^{commit}" 2>/dev/null || true)
         fi
 
+        # without one (the first run, or an older graph branch), start from where the push started
+        if [ -z "$last" ] && [ "$GITHUB_EVENT_NAME" = push ]; then
+          before=$(python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"])).get("before", ""))')
+          last=$(git rev-parse -q --verify "$before^{commit}" 2>/dev/null || true)
+        fi
+
         # graph every commit since then that changed a Makefile, oldest first, so commits pushed
-        # together or faster than the runs each get a graph; on the first run, or if the history
-        # was rewritten, only graph the triggering commit
+        # together or faster than the runs each get a graph; if there is no starting point, or the
+        # history was rewritten, only graph the triggering commit
         commits=""
         if [ -n "$last" ] && git merge-base --is-ancestor "$last" "$GITHUB_SHA"; then
           commits=$(git rev-list --reverse "$last..$GITHUB_SHA" -- '*Makefile')
