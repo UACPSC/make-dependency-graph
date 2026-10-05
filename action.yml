@@ -16,7 +16,7 @@ runs:
     - name: Generate graphs
       shell: bash
       env:
-        MAKEGRAPH: ${{ github.action_path }}/makegraph.py
+        MAKEGRAPH: ${{ github.action_path }}/makegraph
       run: |
         # one makegraph.svg per Makefile, at the same relative path
         git ls-files '*Makefile' | while read -r makefile; do

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-makegraph.py - Generate an SVG dependency graph from a Makefile
+makegraph - Generate an SVG dependency graph from a Makefile
 
 Usage: makegraph [Makefile] [-o output.svg] [--dot]
 

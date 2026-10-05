@@ -36,6 +36,6 @@ jobs:
 
 Requires Python 3 and [Graphviz](https://graphviz.org).
 
-    ./makegraph.py                       # reads Makefile, writes makegraph.svg
-    ./makegraph.py other.mk -o deps.svg
-    ./makegraph.py --dot                 # print the Graphviz source
+    ./makegraph                    # reads Makefile, writes makegraph.svg
+    ./makegraph other.mk -o deps.svg
+    ./makegraph --dot              # print the Graphviz source
