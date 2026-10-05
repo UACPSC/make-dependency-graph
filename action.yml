@@ -45,25 +45,26 @@ runs:
       shell: bash
       env:
         BRANCH: ${{ inputs.branch }}
-        ACTION_PATH: ${{ github.action_path }}
-        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        # the title of the commit that triggered the run, and a link to it
-        message="$(git log -1 --format=%s "$GITHUB_SHA") (${GITHUB_SHA::7})"
+        # title of the commit that triggered the run, read before switching branches
+        title=$(git log -1 --format=%s "$GITHUB_SHA")
 
-        # usually the graph branch exists, so commit with one API request instead of a push
+        # switch to the graph branch, creating it empty the first time
         if git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null; then
-          python3 "$ACTION_PATH/commit.py" "$RUNNER_TEMP/makegraph" "$BRANCH" "$message"
+          git checkout -q -B "$BRANCH" "origin/$BRANCH"
+        else
+          git checkout --orphan "$BRANCH"
+          git rm -rfq .
+        fi
+
+        cp -R "$RUNNER_TEMP/makegraph/." .
+        git add -A -- '*makegraph.svg'
+        if git diff --cached --quiet; then
+          echo "Graphs already up to date"
           exit 0
         fi
 
-        # first run: the API cannot create a branch with no history, so create it with git
-        git checkout -q --orphan "$BRANCH"
-        git rm -rfq .
-        cp -R "$RUNNER_TEMP/makegraph/." .
-        git add -A -- '*makegraph.svg'
         git config user.name "github-actions[bot]"
         git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-        git commit -q -m "$message"
-        git push -q origin "$BRANCH"
-        echo "Created $BRANCH"
+        git commit -m "$title (${GITHUB_SHA::7})"
+        git push origin "$BRANCH"
