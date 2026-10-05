@@ -10,7 +10,8 @@ their line numbers. With --link, clicking the title opens URL, such as the Makef
 GitHub, and clicking a target opens URL#Lstart-Lend, which GitHub shows with the rule's lines
 highlighted.
 
-Edges point from a target to its prerequisites. Node colors:
+Edges point from a target to its prerequisites; dashed edges come from pattern rules (%.o : %.cpp),
+which also make the files they build count as generated. Node colors:
   green - phony targets (.PHONY)
   red   - generated files (targets with rules)
   black - source files (prerequisites only)
@@ -20,12 +21,16 @@ Requires Graphviz (dot) to render the SVG.
 
 import argparse
 import html
+import os
 import re
 import shutil
 import subprocess
 import sys
 
 VAR_REF = re.compile(r"\$\(([^()]+)\)|\$\{([^{}]+)\}")
+
+# a variable assignment: VAR = val, VAR := val, VAR ?= val, VAR += val
+ASSIGNMENT = r"^\s*(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*([:?+!]?=)\s*(.*)$"
 
 
 def read_logical_lines(path):
@@ -83,22 +88,32 @@ def expand(text, variables, depth=0):
     return VAR_REF.sub(repl, text)
 
 
+def pattern_stem(pattern, name):
+    """The part of name that % matches in pattern, or None if pattern does not match."""
+    prefix, _, suffix = pattern.partition("%")
+    if len(name) > len(prefix) + len(suffix) and name.startswith(prefix) and name.endswith(suffix):
+        return name[len(prefix):len(name) - len(suffix)]
+    return None
+
+
 def parse_makefile(path):
     """Return (ordered list of targets, dict target -> prerequisites, set of phony targets,
-    dict target -> list of (line number, text) for its tooltip)."""
+    dict target -> list of (line number, text) for its tooltip, dict target -> (first, last) line
+    numbers to link to, set of (target, prerequisite) edges that come from pattern rules)."""
     variables = {}
     deps = {}
     order = []
     phony = set()
-    leading = {}    # target -> comment and .PHONY lines just before its rule
-    rules = {}      # target -> lines of its rule as written, recipe indented with spaces
+    leading = {}    # rule -> comment and .PHONY lines just before it
+    rules = {}      # rule -> lines of the rule as written, recipe indented with spaces
+    patterns = []   # (key, target pattern, prerequisite patterns) of pattern rules, in order
 
     pending = []    # (number, line, phony targets or None for a comment) just before the current line
-    current = []    # targets of the most recent rule, which recipe lines belong to
+    current = []    # rules the most recent rule line started, which recipe lines belong to
     for kind, line, number in read_logical_lines(path):
         if kind == "recipe":
-            for target in current:
-                rules[target].append((number, "    " + line))
+            for key in current:
+                rules[key].append((number, "    " + line))
             continue
         if kind == "blank":
             pending = []
@@ -111,7 +126,7 @@ def parse_makefile(path):
 
         current = []
         # variable assignments: VAR = val, VAR := val, VAR ?= val, VAR += val
-        m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*([:?+!]?=)\s*(.*)$", line)
+        m = re.match(ASSIGNMENT, line)
         if m:
             name, op, value = m.groups()
             if op == "+=":
@@ -132,6 +147,18 @@ def parse_makefile(path):
             continue
         targets = expand(m.group(1), variables).split()
         prereqs_text = m.group(2).split(";", 1)[0]
+
+        # target-specific variables, such as "prog : CXXFLAGS += -g", are not prerequisites
+        if re.match(ASSIGNMENT, prereqs_text):
+            pending = []
+            continue
+
+        # static pattern rules: targets : target-pattern : prerequisite-patterns
+        static = None
+        if ":" in prereqs_text:
+            target_pattern, _, prereqs_text = prereqs_text.partition(":")
+            static = expand(target_pattern, variables).strip()
+
         # drop order-only marker but keep the prerequisites
         prereqs = expand(prereqs_text, variables).replace("|", " ").split()
 
@@ -142,14 +169,27 @@ def parse_makefile(path):
             continue
 
         for target in targets:
-            # skip other special targets and pattern rules
-            if target.startswith(".") or "%" in target:
+            # skip other special targets, such as .SUFFIXES
+            if target.startswith("."):
                 continue
+
+            # a pattern rule, applied below to the files it can build
+            if "%" in target and not static:
+                key = ("pattern", len(patterns))
+                patterns.append((key, target, prereqs))
+                leading[key] = [(n, text) for n, text, names in pending if names is None]
+                rules[key] = [(number, line.strip())]
+                current.append(key)
+                continue
+
+            stem = pattern_stem(static, target) if static else None
+            target_prereqs = [p.replace("%", stem, 1) for p in prereqs] if stem is not None else prereqs
+
             if target not in deps:
                 deps[target] = []
                 order.append(target)
                 rules[target] = []
-            for p in prereqs:
+            for p in target_prereqs:
                 if p not in deps[target]:
                     deps[target].append(p)
             if target not in leading:
@@ -160,7 +200,53 @@ def parse_makefile(path):
         pending = []
 
     tooltips = {target: leading[target] + rules[target] for target in order}
-    return order, deps, phony, tooltips
+    ranges = {target: (tooltips[target][0][0], tooltips[target][-1][0]) for target in order}
+    implicit = set()
+
+    # apply pattern rules, like make: to files with no recipe of their own, using the first pattern
+    # rule whose prerequisites are known files or exist, or else the first that matches
+    directory = os.path.dirname(path)
+    has_recipe = {target for target in order if any(text.startswith("    ") for _, text in rules[target])}
+    queue = [n for t in order for n in [t] + deps[t]]
+    seen = set()
+    while queue:
+        name = queue.pop(0)
+        if name in seen or name in phony or name in has_recipe:
+            continue
+        seen.add(name)
+
+        chosen = None
+        for key, target_pattern, prereq_patterns in patterns:
+            stem = pattern_stem(target_pattern, name)
+            # a pattern rule with no recipe cancels a built-in rule and builds nothing
+            if stem is None or len(rules[key]) == 1:
+                continue
+            prereqs = [p.replace("%", stem, 1) for p in prereq_patterns]
+            if all(p in deps or p in seen or os.path.exists(os.path.join(directory, p)) for p in prereqs):
+                chosen = (key, prereqs)
+                break
+            if chosen is None:
+                chosen = (key, prereqs)
+        if chosen is None:
+            continue
+
+        key, prereqs = chosen
+        if name not in deps:
+            deps[name] = []
+            order.append(name)
+            tooltips[name] = []
+        # the pattern rule's lines follow any explicit rule for the file, such as one listing headers
+        pattern_lines = leading[key] + rules[key]
+        if not tooltips[name]:
+            ranges[name] = (pattern_lines[0][0], pattern_lines[-1][0])
+        tooltips[name] = tooltips[name] + pattern_lines
+        for p in prereqs:
+            if p not in deps[name]:
+                deps[name].append(p)
+                implicit.add((name, p))
+            queue.append(p)
+
+    return order, deps, phony, tooltips, ranges, implicit
 
 
 def quote(s):
@@ -169,11 +255,11 @@ def quote(s):
 
 def tooltip_text(lines):
     """The tooltip lines, each after its right-aligned line number."""
-    width = len(str(lines[-1][0]))
+    width = max(len(str(n)) for n, _ in lines)
     return "\n".join(f"{n:>{width}}  {text}" for n, text in lines)
 
 
-def to_dot(order, deps, phony, tooltips, title=None, link=None):
+def to_dot(order, deps, phony, tooltips, ranges, implicit, title=None, link=None):
     out = ["digraph G {"]
     if title and link:
         # an HTML-like label, so only the title is a link and not the whole background
@@ -188,6 +274,8 @@ def to_dot(order, deps, phony, tooltips, title=None, link=None):
     out.append("        <tr><td align=\"left\"><font color=\"green\">&#9679; Phony Targets</font></td></tr>")
     out.append("        <tr><td align=\"left\"><font color=\"red\">&#9679; Generated Files</font></td></tr>")
     out.append("        <tr><td align=\"left\">&#9679; Source Files</td></tr>")
+    if implicit:
+        out.append("        <tr><td align=\"left\">&#8674; From Pattern Rules</td></tr>")
     out.append("        </table>>];")
 
     # every node in first-seen order: targets, then prerequisites
@@ -209,12 +297,13 @@ def to_dot(order, deps, phony, tooltips, title=None, link=None):
             attrs += f", tooltip={quote(tooltip_text(tooltips[n]))}"
             if link:
                 # open the rule's lines, as GitHub highlights them
-                attrs += f", URL={quote(f'{link}#L{tooltips[n][0][0]}-L{tooltips[n][-1][0]}')}"
+                attrs += f", URL={quote(f'{link}#L{ranges[n][0]}-L{ranges[n][1]}')}"
         out.append(f"    {quote(n)} [{attrs}];")
 
     for t in order:
         for p in deps[t]:
-            out.append(f"    {quote(t)} -> {quote(p)};")
+            style = " [style=dashed]" if (t, p) in implicit else ""
+            out.append(f"    {quote(t)} -> {quote(p)}{style};")
 
     out.append("}")
     return "\n".join(out) + "\n"

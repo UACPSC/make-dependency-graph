@@ -78,11 +78,23 @@ runs:
           # one makegraph.svg per Makefile, at the same relative path, rendered with the
           # WebAssembly build of Graphviz so nothing has to be installed
           rm -f "$GIT_INDEX_FILE"
+
+          # empty stand-ins for the commit's files, so makegraph can tell which pattern rules
+          # apply (%.o : %.cpp or %.o : %.c) the way make would
+          rm -rf "$work/tree"
+          git ls-tree -r --name-only "$c" | python3 -c '
+        import os, sys
+        for path in sys.stdin.read().splitlines():
+            path = os.path.join(sys.argv[1], path)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").close()
+        ' "$work/tree"
+
           git ls-tree -r --name-only "$c" | { grep -E '(^|/)Makefile$' || true; } | while read -r makefile; do
-            git show "$c:$makefile" > "$work/Makefile"
+            git show "$c:$makefile" > "$work/tree/$makefile"
             # link to this version of the Makefile on GitHub
             link="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$c/$makefile"
-            python3 "$ACTION_PATH/makegraph" "$work/Makefile" --dot --link "$link" |
+            python3 "$ACTION_PATH/makegraph" "$work/tree/$makefile" --dot --link "$link" |
               node "$ACTION_PATH/render.mjs" "$work/makegraph.svg"
             blob=$(git hash-object -w "$work/makegraph.svg")
             git update-index --add --cacheinfo "100644,$blob,${makefile%Makefile}makegraph.svg"
