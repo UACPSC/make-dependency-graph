@@ -50,5 +50,5 @@ runs:
 
         git config user.name "github-actions[bot]"
         git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-        git commit -m "$title" -m "Update graph for ${GITHUB_SHA::7}"
+        git commit -m "$title (${GITHUB_SHA::7})"
         git push origin "$BRANCH"
