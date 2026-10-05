@@ -4,6 +4,8 @@ makegraph.py - Generate an SVG dependency graph from a Makefile
 
 Usage: makegraph [Makefile] [-o output.svg] [--dot]
 
+The first non-blank comment line in the Makefile is used as the title.
+
 Edges point from a target to its prerequisites. Node colors:
   green - phony targets (.PHONY)
   red   - generated files (targets with rules)
@@ -41,6 +43,19 @@ def read_logical_lines(path):
             lines.append(buf)
         buf = ""
     return lines
+
+
+def read_title(path):
+    """Return the text of the first non-blank comment line, or None."""
+    with open(path) as f:
+        for line in f:
+            # recipe lines start with a tab, so their comments are shell comments
+            if line.startswith("\t") or not line.lstrip().startswith("#"):
+                continue
+            text = line.strip().lstrip("#").strip()
+            if text:
+                return text
+    return None
 
 
 def expand(text, variables, depth=0):
@@ -107,8 +122,10 @@ def quote(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def to_dot(order, deps, phony):
+def to_dot(order, deps, phony, title=None):
     out = ["digraph G {"]
+    if title:
+        out.append(f"    label={quote(title)}; labelloc=t; fontsize=20;")
     out.append("    node [shape=ellipse];")
 
     out.append("    key [shape=plaintext, label=<")
@@ -150,7 +167,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        dot_source = to_dot(*parse_makefile(args.makefile))
+        dot_source = to_dot(*parse_makefile(args.makefile), title=read_title(args.makefile))
     except OSError as e:
         sys.exit(f"makegraph: {e}")
 

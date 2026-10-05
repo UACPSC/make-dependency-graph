@@ -2,6 +2,8 @@
 
 Generates an SVG dependency graph from a Makefile.
 
+The first non-blank comment line in the Makefile becomes the graph's title.
+
 Edges point from a target to its prerequisites. Node colors:
 
 - green: phony targets (`.PHONY`)
