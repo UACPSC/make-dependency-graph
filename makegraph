@@ -5,7 +5,7 @@ makegraph - Generate an SVG dependency graph from a Makefile
 Usage: makegraph [Makefile] [-o output.svg] [--dot]
 
 The first non-blank comment line in the Makefile is used as the title.
-Hovering over a target shows the comment just before its rule and its recipe.
+Hovering over a target shows its rule, with the comment just before it.
 
 Edges point from a target to its prerequisites. Node colors:
   green - phony targets (.PHONY)
@@ -84,14 +84,14 @@ def parse_makefile(path):
     order = []
     phony = set()
     comments = {}
-    recipes = {}
+    rules = {}      # target -> lines of its rule as written, recipe indented with spaces
 
     pending = []    # comment lines just before the current line
     current = []    # targets of the most recent rule, which recipe lines belong to
     for kind, line in read_logical_lines(path):
         if kind == "recipe":
             for target in current:
-                recipes[target].append(line)
+                rules[target].append("    " + line)
             continue
         if kind == "blank":
             pending = []
@@ -124,7 +124,7 @@ def parse_makefile(path):
             pending = []
             continue
         targets = expand(m.group(1), variables).split()
-        prereqs_text, _, inline_recipe = m.group(2).partition(";")
+        prereqs_text = m.group(2).split(";", 1)[0]
         # drop order-only marker but keep the prerequisites
         prereqs = expand(prereqs_text, variables).replace("|", " ").split()
 
@@ -140,23 +140,17 @@ def parse_makefile(path):
             if target not in deps:
                 deps[target] = []
                 order.append(target)
-                recipes[target] = []
+                rules[target] = []
             for p in prereqs:
                 if p not in deps[target]:
                     deps[target].append(p)
             if pending and target not in comments:
                 comments[target] = pending
-            if inline_recipe.strip():
-                recipes[target].append(inline_recipe.strip())
+            rules[target].append(line.strip())
             current.append(target)
         pending = []
 
-    tooltips = {}
-    for target in order:
-        parts = ["\n".join(comments.get(target, [])), "\n".join(recipes[target])]
-        text = "\n\n".join(p for p in parts if p)
-        if text:
-            tooltips[target] = text
+    tooltips = {target: "\n".join(comments.get(target, []) + rules[target]) for target in order}
     return order, deps, phony, tooltips
 
 
