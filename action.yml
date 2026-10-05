@@ -11,7 +11,13 @@ runs:
   steps:
     - name: Install Graphviz
       shell: bash
-      run: sudo apt-get update && sudo apt-get install -y graphviz
+      run: |
+        # skip rebuilding the man page index, which nothing here uses
+        sudo rm -f /var/lib/man-db/auto-update
+
+        # the runner's package lists are usually current, so only update them if the install fails
+        install_graphviz() { sudo apt-get install -y --no-install-recommends graphviz; }
+        install_graphviz || { sudo apt-get update && install_graphviz; }
 
     - name: Generate graphs
       shell: bash
