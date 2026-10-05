@@ -22,7 +22,8 @@ Edges point from a target to its prerequisites. Node colors:
 Pattern rules (`%.o : %.cpp`) apply to files with no recipe of their own, the way make applies
 them: a file a pattern rule builds is red, its tooltip includes the pattern rule, and its edges
 from the pattern rule are dashed. Static pattern rules (`$(OBJS) : %.o : %.cpp`) are drawn like
-other rules. Target-specific variables (`prog : CXXFLAGS += -g`) are not prerequisites.
+other rules. Target-specific variables (`prog : CXXFLAGS += -g`) are not prerequisites, but are shown in
+the target's tooltip.
 
 ## Add to a repo
 

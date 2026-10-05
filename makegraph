@@ -11,7 +11,8 @@ GitHub, and clicking a target opens URL#Lstart-Lend, which GitHub shows with the
 highlighted.
 
 Edges point from a target to its prerequisites; dashed edges come from pattern rules (%.o : %.cpp),
-which also make the files they build count as generated. Node colors:
+which also make the files they build count as generated. Target-specific variables
+(prog : CXXFLAGS += -g) are shown in the target's tooltip. Node colors:
   green - phony targets (.PHONY)
   red   - generated files (targets with rules)
   black - source files (prerequisites only)
@@ -107,6 +108,7 @@ def parse_makefile(path):
     leading = {}    # rule -> comment and .PHONY lines just before it
     rules = {}      # rule -> lines of the rule as written, recipe indented with spaces
     patterns = []   # (key, target pattern, prerequisite patterns) of pattern rules, in order
+    extra = {}      # target -> its target-specific variable lines, with the comment before them
 
     pending = []    # (number, line, phony targets or None for a comment) just before the current line
     current = []    # rules the most recent rule line started, which recipe lines belong to
@@ -148,8 +150,13 @@ def parse_makefile(path):
         targets = expand(m.group(1), variables).split()
         prereqs_text = m.group(2).split(";", 1)[0]
 
-        # target-specific variables, such as "prog : CXXFLAGS += -g", are not prerequisites
+        # target-specific variables, such as "prog : CXXFLAGS += -g", are not prerequisites, but are
+        # shown in the target's tooltip
         if re.match(ASSIGNMENT, prereqs_text):
+            for target in targets:
+                if "%" not in target and not target.startswith("."):
+                    lines = [(n, text) for n, text, names in pending if names is None] + [(number, line.strip())]
+                    extra.setdefault(target, []).extend(lines)
             pending = []
             continue
 
@@ -245,6 +252,11 @@ def parse_makefile(path):
                 deps[name].append(p)
                 implicit.add((name, p))
             queue.append(p)
+
+    # add target-specific variable lines, keeping the tooltip in file order
+    for target in order:
+        if target in extra:
+            tooltips[target] = sorted(set(tooltips[target] + extra[target]))
 
     return order, deps, phony, tooltips, ranges, implicit
 
