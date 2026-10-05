@@ -30,6 +30,9 @@ runs:
       env:
         BRANCH: ${{ inputs.branch }}
       run: |
+        # title of the commit that triggered the run, read before switching branches
+        title=$(git log -1 --format=%s "$GITHUB_SHA")
+
         # switch to the graph branch, creating it empty the first time
         if git fetch --depth=1 origin "$BRANCH"; then
           git checkout -B "$BRANCH" FETCH_HEAD
@@ -47,5 +50,5 @@ runs:
 
         git config user.name "github-actions[bot]"
         git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-        git commit -m "Update graph for ${GITHUB_SHA::7}"
+        git commit -m "$title" -m "Update graph for ${GITHUB_SHA::7}"
         git push origin "$BRANCH"
