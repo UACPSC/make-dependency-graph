@@ -4,8 +4,12 @@ Generates an SVG dependency graph from a Makefile.
 
 The first non-blank comment line in the Makefile becomes the graph's title.
 
-Hovering over a target shows its rule, with the comment and `.PHONY` line just before it. Tooltips only work when the SVG is opened directly, such as
-with GitHub's **Raw** button, not in GitHub's file view or in a README image:
+Hovering over a target shows its rule, with the comment and `.PHONY` line just before it, and
+their line numbers. Clicking the title opens that version of the Makefile on GitHub, and clicking
+a target opens it with the target's lines highlighted.
+
+Tooltips and links only work when the SVG is opened directly, such as with GitHub's **Raw**
+button, not in GitHub's file view or in a README image:
 
     https://raw.githubusercontent.com/<owner>/<repo>/diagrams/makegraph.svg
 

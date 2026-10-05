@@ -74,7 +74,9 @@ runs:
           rm -f "$GIT_INDEX_FILE"
           git ls-tree -r --name-only "$c" | { grep -E '(^|/)Makefile$' || true; } | while read -r makefile; do
             git show "$c:$makefile" > "$work/Makefile"
-            python3 "$ACTION_PATH/makegraph" "$work/Makefile" --dot |
+            # link to this version of the Makefile on GitHub
+            link="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$c/$makefile"
+            python3 "$ACTION_PATH/makegraph" "$work/Makefile" --dot --link "$link" |
               node "$ACTION_PATH/render.mjs" "$work/makegraph.svg"
             blob=$(git hash-object -w "$work/makegraph.svg")
             git update-index --add --cacheinfo "100644,$blob,${makefile%Makefile}makegraph.svg"

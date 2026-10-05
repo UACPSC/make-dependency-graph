@@ -2,10 +2,13 @@
 """
 makegraph - Generate an SVG dependency graph from a Makefile
 
-Usage: makegraph [Makefile] [-o output.svg] [--dot]
+Usage: makegraph [Makefile] [-o output.svg] [--dot] [--link URL]
 
 The first non-blank comment line in the Makefile is used as the title.
-Hovering over a target shows its rule, with the comment and .PHONY line just before it.
+Hovering over a target shows its rule, with the comment and .PHONY line just before it, and
+their line numbers. With --link, clicking the title opens URL, such as the Makefile's page on
+GitHub, and clicking a target opens URL#Lstart-Lend, which GitHub shows with the rule's lines
+highlighted.
 
 Edges point from a target to its prerequisites. Node colors:
   green - phony targets (.PHONY)
@@ -16,6 +19,7 @@ Requires Graphviz (dot) to render the SVG.
 """
 
 import argparse
+import html
 import re
 import shutil
 import subprocess
@@ -25,7 +29,7 @@ VAR_REF = re.compile(r"\$\(([^()]+)\)|\$\{([^{}]+)\}")
 
 
 def read_logical_lines(path):
-    """Yield (kind, text) for each line of the Makefile, joining backslash continuations.
+    """Yield (kind, text, line number) for each line of the Makefile, joining backslash continuations.
 
     kind is "recipe" (a tab-indented recipe line), "comment", "blank", or "line" (anything else,
     with any trailing comment removed).
@@ -34,20 +38,23 @@ def read_logical_lines(path):
         raw = f.read().splitlines()
 
     buf = ""
-    for line in raw:
+    start = 0       # line number of the first line of a continued line
+    for number, line in enumerate(raw, 1):
         if not buf and line.startswith("\t"):
-            yield "recipe", line[1:]
+            yield "recipe", line[1:], number
             continue
+        if not buf:
+            start = number
         if line.endswith("\\"):
             buf += line[:-1] + " "
             continue
         buf += line
         if not buf.strip():
-            yield "blank", ""
+            yield "blank", "", start
         elif buf.lstrip().startswith("#"):
-            yield "comment", buf.strip()
+            yield "comment", buf.strip(), start
         else:
-            yield "line", buf.split("#", 1)[0].rstrip()
+            yield "line", buf.split("#", 1)[0].rstrip(), start
         buf = ""
 
 
@@ -78,7 +85,7 @@ def expand(text, variables, depth=0):
 
 def parse_makefile(path):
     """Return (ordered list of targets, dict target -> prerequisites, set of phony targets,
-    dict target -> tooltip text)."""
+    dict target -> list of (line number, text) for its tooltip)."""
     variables = {}
     deps = {}
     order = []
@@ -86,12 +93,12 @@ def parse_makefile(path):
     leading = {}    # target -> comment and .PHONY lines just before its rule
     rules = {}      # target -> lines of its rule as written, recipe indented with spaces
 
-    pending = []    # (line, phony targets or None for a comment) just before the current line
+    pending = []    # (number, line, phony targets or None for a comment) just before the current line
     current = []    # targets of the most recent rule, which recipe lines belong to
-    for kind, line in read_logical_lines(path):
+    for kind, line, number in read_logical_lines(path):
         if kind == "recipe":
             for target in current:
-                rules[target].append("    " + line)
+                rules[target].append((number, "    " + line))
             continue
         if kind == "blank":
             pending = []
@@ -99,7 +106,7 @@ def parse_makefile(path):
         if kind == "comment":
             # skip comment lines with no text, such as "#" or "######"
             if line.lstrip("#").strip():
-                pending.append((line, None))
+                pending.append((number, line, None))
             continue
 
         current = []
@@ -131,7 +138,7 @@ def parse_makefile(path):
         # a comment and .PHONY line before a rule belong with that rule
         if targets == [".PHONY"]:
             phony.update(prereqs)
-            pending.append((line.strip(), prereqs))
+            pending.append((number, line.strip(), prereqs))
             continue
 
         for target in targets:
@@ -147,12 +154,12 @@ def parse_makefile(path):
                     deps[target].append(p)
             if target not in leading:
                 # a .PHONY line only belongs with a rule for a target it declares
-                leading[target] = [text for text, names in pending if names is None or target in names]
-            rules[target].append(line.strip())
+                leading[target] = [(n, text) for n, text, names in pending if names is None or target in names]
+            rules[target].append((number, line.strip()))
             current.append(target)
         pending = []
 
-    tooltips = {target: "\n".join(leading[target] + rules[target]) for target in order}
+    tooltips = {target: leading[target] + rules[target] for target in order}
     return order, deps, phony, tooltips
 
 
@@ -160,9 +167,19 @@ def quote(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
-def to_dot(order, deps, phony, tooltips, title=None):
+def tooltip_text(lines):
+    """The tooltip lines, each after its right-aligned line number."""
+    width = len(str(lines[-1][0]))
+    return "\n".join(f"{n:>{width}}  {text}" for n, text in lines)
+
+
+def to_dot(order, deps, phony, tooltips, title=None, link=None):
     out = ["digraph G {"]
-    if title:
+    if title and link:
+        # an HTML-like label, so only the title is a link and not the whole background
+        cell = f'<td href="{html.escape(link)}" tooltip="View this version of the Makefile">{html.escape(title)}</td>'
+        out.append(f'    label=<<table border="0" cellborder="0"><tr>{cell}</tr></table>>; labelloc=t; fontsize=20;')
+    elif title:
         out.append(f"    label={quote(title)}; labelloc=t; fontsize=20;")
     out.append("    node [shape=ellipse];")
 
@@ -189,7 +206,10 @@ def to_dot(order, deps, phony, tooltips, title=None):
             color = "black"
         attrs = f"fontcolor={color}"
         if n in tooltips:
-            attrs += f", tooltip={quote(tooltips[n])}"
+            attrs += f", tooltip={quote(tooltip_text(tooltips[n]))}"
+            if link:
+                # open the rule's lines, as GitHub highlights them
+                attrs += f", URL={quote(f'{link}#L{tooltips[n][0][0]}-L{tooltips[n][-1][0]}')}"
         out.append(f"    {quote(n)} [{attrs}];")
 
     for t in order:
@@ -214,10 +234,12 @@ def main():
     parser.add_argument("makefile", nargs="?", default="Makefile", help="Makefile to read (default: Makefile)")
     parser.add_argument("-o", "--output", default="makegraph.svg", help="output SVG file (default: makegraph.svg)")
     parser.add_argument("--dot", action="store_true", help="print the Graphviz DOT source instead of rendering")
+    parser.add_argument("--link", metavar="URL",
+                        help="make the title a link to URL, and each target a link to URL#Lstart-Lend, the lines of its rule")
     args = parser.parse_args()
 
     try:
-        dot_source = to_dot(*parse_makefile(args.makefile), title=read_title(args.makefile))
+        dot_source = to_dot(*parse_makefile(args.makefile), title=read_title(args.makefile), link=args.link)
     except OSError as e:
         sys.exit(f"makegraph: {e}")
 
