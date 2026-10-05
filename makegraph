@@ -5,7 +5,7 @@ makegraph - Generate an SVG dependency graph from a Makefile
 Usage: makegraph [Makefile] [-o output.svg] [--dot]
 
 The first non-blank comment line in the Makefile is used as the title.
-Hovering over a target shows its rule, with the comment just before it.
+Hovering over a target shows its rule, with the comment and .PHONY line just before it.
 
 Edges point from a target to its prerequisites. Node colors:
   green - phony targets (.PHONY)
@@ -83,10 +83,10 @@ def parse_makefile(path):
     deps = {}
     order = []
     phony = set()
-    comments = {}
+    leading = {}    # target -> comment and .PHONY lines just before its rule
     rules = {}      # target -> lines of its rule as written, recipe indented with spaces
 
-    pending = []    # comment lines just before the current line
+    pending = []    # (line, phony targets or None for a comment) just before the current line
     current = []    # targets of the most recent rule, which recipe lines belong to
     for kind, line in read_logical_lines(path):
         if kind == "recipe":
@@ -99,7 +99,7 @@ def parse_makefile(path):
         if kind == "comment":
             # skip comment lines with no text, such as "#" or "######"
             if line.lstrip("#").strip():
-                pending.append(line)
+                pending.append((line, None))
             continue
 
         current = []
@@ -128,9 +128,10 @@ def parse_makefile(path):
         # drop order-only marker but keep the prerequisites
         prereqs = expand(prereqs_text, variables).replace("|", " ").split()
 
-        # a comment before .PHONY describes the rule that follows it
+        # a comment and .PHONY line before a rule belong with that rule
         if targets == [".PHONY"]:
             phony.update(prereqs)
+            pending.append((line.strip(), prereqs))
             continue
 
         for target in targets:
@@ -144,13 +145,14 @@ def parse_makefile(path):
             for p in prereqs:
                 if p not in deps[target]:
                     deps[target].append(p)
-            if pending and target not in comments:
-                comments[target] = pending
+            if target not in leading:
+                # a .PHONY line only belongs with a rule for a target it declares
+                leading[target] = [text for text, names in pending if names is None or target in names]
             rules[target].append(line.strip())
             current.append(target)
         pending = []
 
-    tooltips = {target: "\n".join(comments.get(target, []) + rules[target]) for target in order}
+    tooltips = {target: "\n".join(leading[target] + rules[target]) for target in order}
     return order, deps, phony, tooltips
 
 
