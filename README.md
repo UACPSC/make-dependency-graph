@@ -4,6 +4,12 @@ Generates an SVG dependency graph from a Makefile.
 
 The first non-blank comment line in the Makefile becomes the graph's title.
 
+Hovering over a target shows the comment just before its rule (a comment before its `.PHONY`
+line also counts) and its recipe. Tooltips only work when the SVG is opened directly, such as
+with GitHub's **Raw** button, not in GitHub's file view or in a README image:
+
+    https://raw.githubusercontent.com/<owner>/<repo>/diagrams/makegraph.svg
+
 Edges point from a target to its prerequisites. Node colors:
 
 - green: phony targets (`.PHONY`)

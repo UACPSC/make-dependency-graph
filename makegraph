@@ -5,6 +5,7 @@ makegraph - Generate an SVG dependency graph from a Makefile
 Usage: makegraph [Makefile] [-o output.svg] [--dot]
 
 The first non-blank comment line in the Makefile is used as the title.
+Hovering over a target shows the comment just before its rule and its recipe.
 
 Edges point from a target to its prerequisites. Node colors:
   green - phony targets (.PHONY)
@@ -24,25 +25,30 @@ VAR_REF = re.compile(r"\$\(([^()]+)\)|\$\{([^{}]+)\}")
 
 
 def read_logical_lines(path):
-    """Read the Makefile, joining backslash continuations and skipping recipes/comments."""
+    """Yield (kind, text) for each line of the Makefile, joining backslash continuations.
+
+    kind is "recipe" (a tab-indented recipe line), "comment", "blank", or "line" (anything else,
+    with any trailing comment removed).
+    """
     with open(path) as f:
         raw = f.read().splitlines()
 
-    lines = []
     buf = ""
     for line in raw:
-        # recipe lines start with a tab and are not part of the dependency graph
         if not buf and line.startswith("\t"):
+            yield "recipe", line[1:]
             continue
         if line.endswith("\\"):
             buf += line[:-1] + " "
             continue
         buf += line
-        buf = buf.split("#", 1)[0].rstrip()
-        if buf.strip():
-            lines.append(buf)
+        if not buf.strip():
+            yield "blank", ""
+        elif buf.lstrip().startswith("#"):
+            yield "comment", buf.strip().lstrip("#").strip()
+        else:
+            yield "line", buf.split("#", 1)[0].rstrip()
         buf = ""
-    return lines
 
 
 def read_title(path):
@@ -71,13 +77,31 @@ def expand(text, variables, depth=0):
 
 
 def parse_makefile(path):
-    """Return (ordered list of targets, dict target -> prerequisites, set of phony targets)."""
+    """Return (ordered list of targets, dict target -> prerequisites, set of phony targets,
+    dict target -> tooltip text)."""
     variables = {}
     deps = {}
     order = []
     phony = set()
+    comments = {}
+    recipes = {}
 
-    for line in read_logical_lines(path):
+    pending = []    # comment lines just before the current line
+    current = []    # targets of the most recent rule, which recipe lines belong to
+    for kind, line in read_logical_lines(path):
+        if kind == "recipe":
+            for target in current:
+                recipes[target].append(line)
+            continue
+        if kind == "blank":
+            pending = []
+            continue
+        if kind == "comment":
+            if line:
+                pending.append(line)
+            continue
+
+        current = []
         # variable assignments: VAR = val, VAR := val, VAR ?= val, VAR += val
         m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*([:?+!]?=)\s*(.*)$", line)
         if m:
@@ -90,39 +114,56 @@ def parse_makefile(path):
                 variables[name] = expand(value, variables)
             else:
                 variables[name] = value
+            pending = []
             continue
 
         # rules: targets : prerequisites [; recipe]
         m = re.match(r"^([^:=]+?)\s*::?\s*(.*)$", line)
         if not m:
+            pending = []
             continue
         targets = expand(m.group(1), variables).split()
-        prereqs_text = m.group(2).split(";", 1)[0]
+        prereqs_text, _, inline_recipe = m.group(2).partition(";")
         # drop order-only marker but keep the prerequisites
         prereqs = expand(prereqs_text, variables).replace("|", " ").split()
 
+        # a comment before .PHONY describes the rule that follows it
+        if targets == [".PHONY"]:
+            phony.update(prereqs)
+            continue
+
         for target in targets:
-            if target == ".PHONY":
-                phony.update(prereqs)
-                continue
             # skip other special targets and pattern rules
             if target.startswith(".") or "%" in target:
                 continue
             if target not in deps:
                 deps[target] = []
                 order.append(target)
+                recipes[target] = []
             for p in prereqs:
                 if p not in deps[target]:
                     deps[target].append(p)
+            if pending and target not in comments:
+                comments[target] = pending
+            if inline_recipe.strip():
+                recipes[target].append(inline_recipe.strip())
+            current.append(target)
+        pending = []
 
-    return order, deps, phony
+    tooltips = {}
+    for target in order:
+        parts = ["\n".join(comments.get(target, [])), "\n".join(recipes[target])]
+        text = "\n\n".join(p for p in parts if p)
+        if text:
+            tooltips[target] = text
+    return order, deps, phony, tooltips
 
 
 def quote(s):
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
-def to_dot(order, deps, phony, title=None):
+def to_dot(order, deps, phony, tooltips, title=None):
     out = ["digraph G {"]
     if title:
         out.append(f"    label={quote(title)}; labelloc=t; fontsize=20;")
@@ -149,7 +190,10 @@ def to_dot(order, deps, phony, title=None):
             color = "red"
         else:
             color = "black"
-        out.append(f"    {quote(n)} [fontcolor={color}];")
+        attrs = f"fontcolor={color}"
+        if n in tooltips:
+            attrs += f", tooltip={quote(tooltips[n])}"
+        out.append(f"    {quote(n)} [{attrs}];")
 
     for t in order:
         for p in deps[t]:
