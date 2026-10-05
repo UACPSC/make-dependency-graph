@@ -45,7 +45,7 @@ def read_logical_lines(path):
         if not buf.strip():
             yield "blank", ""
         elif buf.lstrip().startswith("#"):
-            yield "comment", buf.strip().lstrip("#").strip()
+            yield "comment", buf.strip()
         else:
             yield "line", buf.split("#", 1)[0].rstrip()
         buf = ""
@@ -97,7 +97,8 @@ def parse_makefile(path):
             pending = []
             continue
         if kind == "comment":
-            if line:
+            # skip comment lines with no text, such as "#" or "######"
+            if line.lstrip("#").strip():
                 pending.append(line)
             continue
 
