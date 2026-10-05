@@ -1,0 +1,25 @@
+# Reusable workflow: generate the Makefile dependency graph for the calling repo.
+# See README.md for the workflow to add to a repo.
+
+name: Makefile dependency graph
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: Branch the graphs are committed to
+        type: string
+        default: diagrams
+
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: makegraph-${{ github.repository }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: UACPSC/make-dependency-graph@main
+        with:
+          branch: ${{ inputs.branch }}

@@ -1,0 +1,19 @@
+# Generate the Makefile dependency graph (makegraph.svg) on the diagrams branch
+# whenever a Makefile changes on main. See https://github.com/UACPSC/make-dependency-graph
+
+name: Makefile dependency graph
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/Makefile'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  graph:
+    uses: UACPSC/make-dependency-graph/.github/workflows/makegraph.yml@main

@@ -1,0 +1,51 @@
+name: Makefile dependency graph
+description: Generate makegraph.svg for each Makefile in the repo and commit them to a separate branch
+
+inputs:
+  branch:
+    description: Branch the graphs are committed to
+    default: diagrams
+
+runs:
+  using: composite
+  steps:
+    - name: Install Graphviz
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y graphviz
+
+    - name: Generate graphs
+      shell: bash
+      env:
+        MAKEGRAPH: ${{ github.action_path }}/makegraph.py
+      run: |
+        # one makegraph.svg per Makefile, at the same relative path
+        git ls-files '*Makefile' | while read -r makefile; do
+          dir=$(dirname "$makefile")
+          mkdir -p "$RUNNER_TEMP/makegraph/$dir"
+          python3 "$MAKEGRAPH" "$makefile" -o "$RUNNER_TEMP/makegraph/$dir/makegraph.svg"
+        done
+
+    - name: Commit to graph branch
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        # switch to the graph branch, creating it empty the first time
+        if git fetch --depth=1 origin "$BRANCH"; then
+          git checkout -B "$BRANCH" FETCH_HEAD
+        else
+          git checkout --orphan "$BRANCH"
+          git rm -rfq .
+        fi
+
+        cp -R "$RUNNER_TEMP/makegraph/." .
+        git add -A -- '*makegraph.svg'
+        if git diff --cached --quiet; then
+          echo "Graphs already up to date"
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+        git commit -m "Update graph for ${GITHUB_SHA::7}"
+        git push origin "$BRANCH"
