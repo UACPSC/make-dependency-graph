@@ -9,6 +9,24 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Fetch
+      shell: bash
+      env:
+        TOKEN: ${{ github.token }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        git init -q .
+        git config http.$GITHUB_SERVER_URL/.extraheader \
+          "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+        git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+
+        # latest commit only of both the triggering commit and the graph branch, in one fetch
+        if ! git fetch -q --depth=1 --no-tags origin "$GITHUB_SHA" "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"; then
+          # the graph branch does not exist yet
+          git fetch -q --depth=1 --no-tags origin "$GITHUB_SHA"
+        fi
+        git checkout -q --detach "$GITHUB_SHA"
+
     - name: Generate graphs
       shell: bash
       env:
@@ -32,8 +50,8 @@ runs:
         title=$(git log -1 --format=%s "$GITHUB_SHA")
 
         # switch to the graph branch, creating it empty the first time
-        if git fetch --depth=1 origin "$BRANCH"; then
-          git checkout -B "$BRANCH" FETCH_HEAD
+        if git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null; then
+          git checkout -q -B "$BRANCH" "origin/$BRANCH"
         else
           git checkout --orphan "$BRANCH"
           git rm -rfq .

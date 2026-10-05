@@ -18,8 +18,7 @@ jobs:
       group: makegraph-${{ github.repository }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7
-
+      # the action fetches the repository itself
       - uses: UACPSC/make-dependency-graph@main
         with:
           branch: ${{ inputs.branch }}
