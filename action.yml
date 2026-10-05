@@ -20,51 +20,80 @@ runs:
           "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
         git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
 
-        # latest commit only of both the triggering commit and the graph branch, in one fetch
-        if ! git fetch -q --depth=1 --no-tags origin "$GITHUB_SHA" "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"; then
+        # history of the triggering commit and the graph branch, in one fetch, without file
+        # contents (only the Makefiles are needed, and are fetched later)
+        if ! git fetch -q --filter=blob:none --no-tags origin "$GITHUB_SHA" "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null; then
           # the graph branch does not exist yet
-          git fetch -q --depth=1 --no-tags origin "$GITHUB_SHA"
+          git fetch -q --filter=blob:none --no-tags origin "$GITHUB_SHA"
         fi
-        git checkout -q --detach "$GITHUB_SHA"
 
-    - name: Generate graphs
-      shell: bash
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-      run: |
-        # one makegraph.svg per Makefile, at the same relative path, rendered with the
-        # WebAssembly build of Graphviz so nothing has to be installed
-        git ls-files '*Makefile' | while read -r makefile; do
-          dir=$(dirname "$makefile")
-          mkdir -p "$RUNNER_TEMP/makegraph/$dir"
-          python3 "$ACTION_PATH/makegraph" "$makefile" --dot |
-            node "$ACTION_PATH/render.mjs" "$RUNNER_TEMP/makegraph/$dir/makegraph.svg"
-        done
-
-    - name: Commit to graph branch
+    - name: Graph each new commit
       shell: bash
       env:
         BRANCH: ${{ inputs.branch }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        # title of the commit that triggered the run, read before switching branches
-        title=$(git log -1 --format=%s "$GITHUB_SHA")
+        graphed="refs/remotes/origin/$BRANCH"
+        parent=$(git rev-parse -q --verify "$graphed" || true)
 
-        # switch to the graph branch, creating it empty the first time
-        if git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null; then
-          git checkout -q -B "$BRANCH" "origin/$BRANCH"
+        # the commit the latest graph was made for, from the "(abc1234)" at the end of its message
+        last=""
+        if [ -n "$parent" ]; then
+          short=$(git log -1 --format=%s "$parent" | sed -n 's/.*(\([0-9a-f]\{7,\}\))$/\1/p')
+          last=$(git rev-parse -q --verify "$short^{commit}" 2>/dev/null || true)
+        fi
+
+        # graph every commit since then that changed a Makefile, oldest first, so commits pushed
+        # together or faster than the runs each get a graph; on the first run, or if the history
+        # was rewritten, only graph the triggering commit
+        commits=""
+        if [ -n "$last" ] && git merge-base --is-ancestor "$last" "$GITHUB_SHA"; then
+          commits=$(git rev-list --reverse "$last..$GITHUB_SHA" -- '*Makefile')
+        fi
+        # always include the triggering commit, so a manual run redraws the latest graph
+        if [ "$(echo "$commits" | tail -1)" != "$GITHUB_SHA" ]; then
+          commits=$(printf '%s\n%s' "$commits" "$GITHUB_SHA")
+        fi
+
+        # fetch all the Makefiles needed, in one request
+        blobs=$(for c in $commits; do git ls-tree -r "$c" | awk '$4 ~ /(^|\/)Makefile$/ { print $3 }'; done | sort -u)
+        if [ -n "$blobs" ]; then
+          git fetch -q --filter=blob:none --no-tags origin $blobs
+        fi
+
+        export GIT_INDEX_FILE="$RUNNER_TEMP/makegraph-index"
+        export GIT_AUTHOR_NAME="github-actions[bot]" GIT_COMMITTER_NAME="github-actions[bot]"
+        export GIT_AUTHOR_EMAIL="41898283+github-actions[bot]@users.noreply.github.com"
+        export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+        work="$RUNNER_TEMP/makegraph"
+        mkdir -p "$work"
+
+        for c in $commits; do
+          # one makegraph.svg per Makefile, at the same relative path, rendered with the
+          # WebAssembly build of Graphviz so nothing has to be installed
+          rm -f "$GIT_INDEX_FILE"
+          git ls-tree -r --name-only "$c" | { grep -E '(^|/)Makefile$' || true; } | while read -r makefile; do
+            git show "$c:$makefile" > "$work/Makefile"
+            python3 "$ACTION_PATH/makegraph" "$work/Makefile" --dot |
+              node "$ACTION_PATH/render.mjs" "$work/makegraph.svg"
+            blob=$(git hash-object -w "$work/makegraph.svg")
+            git update-index --add --cacheinfo "100644,$blob,${makefile%Makefile}makegraph.svg"
+          done
+          tree=$(git write-tree)
+
+          # skip a commit whose graphs are the same as the latest ones
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then
+            echo "${c::7}: graph unchanged"
+            continue
+          fi
+
+          message="$(git log -1 --format=%s "$c") (${c::7})"
+          parent=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "$message")
+          echo "${c::7}: $message"
+        done
+
+        if [ "$parent" != "$(git rev-parse -q --verify "$graphed" || true)" ]; then
+          git push -q origin "$parent:refs/heads/$BRANCH"
         else
-          git checkout --orphan "$BRANCH"
-          git rm -rfq .
-        fi
-
-        cp -R "$RUNNER_TEMP/makegraph/." .
-        git add -A -- '*makegraph.svg'
-        if git diff --cached --quiet; then
           echo "Graphs already up to date"
-          exit 0
         fi
-
-        git config user.name "github-actions[bot]"
-        git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-        git commit -m "$title (${GITHUB_SHA::7})"
-        git push origin "$BRANCH"
