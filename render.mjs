@@ -12,7 +12,10 @@ if (!output) {
 
 const graphviz = await Graphviz.load();
 try {
-    writeFileSync(output, graphviz.dot(readFileSync(0, "utf8")));
+    const svg = graphviz.dot(readFileSync(0, "utf8"));
+    // remove the <title> Graphviz gives the graph, every node, and every edge, which browsers
+    // show as tooltips (same as remove_titles() in makegraph)
+    writeFileSync(output, svg.replace(/<title>[^<]*<\/title>\n?/g, ""));
 } catch (e) {
     console.error(`render: ${e.message}`);
     process.exit(1);

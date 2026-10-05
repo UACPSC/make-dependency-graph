@@ -204,6 +204,15 @@ def to_dot(order, deps, phony, tooltips, title=None):
     return "\n".join(out) + "\n"
 
 
+def remove_titles(svg):
+    """Remove the <title> Graphviz gives the graph, every node, and every edge.
+
+    Browsers show these as tooltips (the graph name, node names, "a->b"), which would compete with
+    the target tooltips.
+    """
+    return re.sub(r"<title>[^<]*</title>\n?", "", svg)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="makegraph", description="Generate an SVG dependency graph from a Makefile")
     parser.add_argument("makefile", nargs="?", default="Makefile", help="Makefile to read (default: Makefile)")
@@ -223,9 +232,12 @@ def main():
     if not shutil.which("dot"):
         sys.exit("makegraph: Graphviz 'dot' not found; install Graphviz or use --dot")
 
-    result = subprocess.run(["dot", "-Tsvg", "-o", args.output], input=dot_source, text=True)
+    result = subprocess.run(["dot", "-Tsvg"], input=dot_source, capture_output=True, text=True)
     if result.returncode != 0:
+        sys.stderr.write(result.stderr)
         sys.exit(result.returncode)
+    with open(args.output, "w") as f:
+        f.write(remove_titles(result.stdout))
 
 
 if __name__ == "__main__":
